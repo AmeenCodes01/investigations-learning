@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 
@@ -19,6 +20,21 @@ type Table struct {
 
 type ListTablesOutput struct {
 	Tables []Table `json:"tables"`
+}
+
+// The jsonschema tag is the description Claude reads for this input.
+type DescribeTableInput struct {
+	Table string `json:"table" jsonschema:"name of the table, as returned by list_tables"`
+}
+
+type Column struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Nullable string `json:"nullable"`
+}
+
+type DescribeTableOutput struct {
+	Columns []Column `json:"columns"`
 }
 
 func main() {
@@ -47,6 +63,14 @@ func main() {
 		return nil, ListTablesOutput{Tables: tables}, err
 	})
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "describe_table",
+		Description: "Show a table's columns and their types. Read-only. Use before writing a query against the table.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DescribeTableInput) (*mcp.CallToolResult, DescribeTableOutput, error) {
+		cols, err := describeTable(ctx, db, in.Table)
+		return nil, DescribeTableOutput{Columns: cols}, err
+	})
+
 	// stdout is the line to Claude, so all our own logging goes to stderr (log's default).
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)
@@ -73,4 +97,32 @@ func listTables(ctx context.Context, db *sql.DB) ([]Table, error) {
 		tables = append(tables, t)
 	}
 	return tables, rows.Err()
+}
+
+func describeTable(ctx context.Context, db *sql.DB, table string) ([]Column, error) {
+	// The table name comes from the LLM, so it goes in as a ? parameter, never pasted into the SQL.
+	rows, err := db.QueryContext(ctx, `
+		SELECT column_name, column_type, is_nullable FROM information_schema.columns
+		WHERE table_schema = DATABASE() AND table_name = ?
+		ORDER BY ordinal_position`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols := []Column{}
+	for rows.Next() {
+		var c Column
+		if err := rows.Scan(&c.Name, &c.Type, &c.Nullable); err != nil {
+			return nil, err
+		}
+		cols = append(cols, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(cols) == 0 {
+		return nil, fmt.Errorf("no table named %q", table)
+	}
+	return cols, nil
 }
