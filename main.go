@@ -57,6 +57,17 @@ func main() {
 		return nil, DryRunWriteOutput{RowsAffected: n}, err
 	})
 
+	// No annotations: MCP's defaults already say "may change data, may be destructive".
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "execute_write",
+		Description: "Save one INSERT, UPDATE or DELETE. Only call this after dry_run_write on the exact same SQL, " +
+			"passing its rows_affected as expected_rows. If the statement changes a different number of rows " +
+			"(because the data changed since the dry run), everything is rolled back and nothing is saved.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in ExecuteWriteInput) (*mcp.CallToolResult, ExecuteWriteOutput, error) {
+		n, err := executeWrite(ctx, writeDB, in.SQL, in.ExpectedRows)
+		return nil, ExecuteWriteOutput{RowsAffected: n}, err
+	})
+
 	// stdout is the line to Claude, so all our own logging goes to stderr (log's default).
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)

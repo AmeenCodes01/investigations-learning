@@ -128,3 +128,37 @@ func TestWriteUserCannotChangeSchema(t *testing.T) {
 		t.Fatalf("err = %v, want MySQL to deny DROP", err)
 	}
 }
+
+const fixStuckOrders = "UPDATE orders SET status = 'paid' WHERE status = 'pending'"
+const countPending = "SELECT COUNT(*) FROM orders WHERE status = 'pending'"
+
+func TestExecuteWriteRollsBackOnUnexpectedRowCount(t *testing.T) {
+	db := testDB(t, "DATABASE_URL_RW")
+
+	// Pretend the dry run saw 2 rows, but there are now 3.
+	_, err := executeWrite(context.Background(), db, fixStuckOrders, 2)
+	if err == nil {
+		t.Fatal("write with the wrong row count was committed")
+	}
+	if got := countRows(t, db, countPending); got != 3 {
+		t.Errorf("pending orders = %d, want 3 (rolled back)", got)
+	}
+}
+
+func TestExecuteWriteCommitsWhenRowCountMatches(t *testing.T) {
+	db := testDB(t, "DATABASE_URL_RW")
+	t.Cleanup(func() { // put the planted bug back for the other tests
+		db.Exec("UPDATE orders SET status = 'pending' WHERE id IN (7, 19, 33)")
+	})
+
+	n, err := executeWrite(context.Background(), db, fixStuckOrders, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Errorf("rows affected = %d, want 3", n)
+	}
+	if got := countRows(t, db, countPending); got != 0 {
+		t.Errorf("pending orders = %d, want 0 (committed)", got)
+	}
+}
