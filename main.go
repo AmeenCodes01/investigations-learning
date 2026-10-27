@@ -34,6 +34,17 @@ func main() {
 		return nil, DescribeTableOutput{Columns: cols}, err
 	})
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "run_query",
+		Description: "Run one read-only SQL SELECT and return the rows (at most 200). " +
+			"Runs as a read-only database user with a 5 second limit; writes are refused. " +
+			"Use describe_table first so you know the column names.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in RunQueryInput) (*mcp.CallToolResult, RunQueryOutput, error) {
+		out, err := runQuery(ctx, readDB, in.SQL)
+		return nil, out, err
+	})
+
 	// stdout is the line to Claude, so all our own logging goes to stderr (log's default).
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)

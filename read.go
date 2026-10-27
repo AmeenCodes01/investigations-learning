@@ -31,6 +31,19 @@ type DescribeTableOutput struct {
 	Columns []Column `json:"columns"`
 }
 
+// maxQueryRows caps run_query's answer, protecting both the database and Claude's context.
+const maxQueryRows = 200
+
+type RunQueryInput struct {
+	SQL string `json:"sql" jsonschema:"one SELECT statement"`
+}
+
+type RunQueryOutput struct {
+	Columns   []string `json:"columns"`
+	Rows      [][]any  `json:"rows"`
+	Truncated bool     `json:"truncated" jsonschema:"true if there were more than 200 rows and only the first 200 are shown"`
+}
+
 func listTables(ctx context.Context, db *sql.DB) ([]Table, error) {
 	// information_schema holds MySQL's own estimates; COUNT(*) would scan every row of every table.
 	rows, err := db.QueryContext(ctx, `
@@ -79,4 +92,51 @@ func describeTable(ctx context.Context, db *sql.DB, table string) ([]Column, err
 		return nil, fmt.Errorf("no table named %q", table)
 	}
 	return cols, nil
+}
+
+func runQuery(ctx context.Context, db *sql.DB, query string) (RunQueryOutput, error) {
+	// A read-only transaction is a second lock on top of the read-only MySQL user.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return RunQueryOutput{}, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return RunQueryOutput{}, err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return RunQueryOutput{}, err
+	}
+
+	out := RunQueryOutput{Columns: columns, Rows: [][]any{}}
+	for rows.Next() {
+		if len(out.Rows) == maxQueryRows {
+			out.Truncated = true
+			break
+		}
+
+		// We don't know the columns in advance, so scan each value into an "any".
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return RunQueryOutput{}, err
+		}
+
+		// MySQL sends text as raw bytes, which JSON would turn into unreadable base64.
+		for i, v := range values {
+			if b, ok := v.([]byte); ok {
+				values[i] = string(b)
+			}
+		}
+		out.Rows = append(out.Rows, values)
+	}
+	return out, rows.Err()
 }
