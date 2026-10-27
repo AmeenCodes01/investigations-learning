@@ -1,3 +1,4 @@
-toolbox
-gateway
+# built programs, at the repo root only
+/toolbox
+/gateway
 .env

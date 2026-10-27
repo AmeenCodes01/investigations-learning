@@ -1,13 +1,8 @@
 {
   "mcpServers": {
-    "toolbox": {
-      "type": "stdio",
-      "command": "go",
-      "args": ["run", "./cmd/toolbox"],
-      "env": {
-        "DATABASE_URL_RO": "${DATABASE_URL_RO}",
-        "DATABASE_URL_RW": "${DATABASE_URL_RW}"
-      }
+    "gateway": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
