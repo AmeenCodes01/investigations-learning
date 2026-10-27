@@ -1,7 +1,7 @@
 package main
 
 // These tests run against the local test database from setup.sql.
-// Run them with:  mysql -uroot < setup.sql && source .env && go test ./...
+// Run them from the repo root with:  mysql -uroot < setup.sql && source .env && go test ./...
 
 import (
 	"context"
