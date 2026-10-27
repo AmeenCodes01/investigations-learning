@@ -13,6 +13,7 @@ import (
 
 func main() {
 	readDB := openDB("DATABASE_URL_RO")
+	writeDB := openDB("DATABASE_URL_RW")
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "toolbox", Version: "0.2.0"}, nil)
 
@@ -43,6 +44,17 @@ func main() {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in RunQueryInput) (*mcp.CallToolResult, RunQueryOutput, error) {
 		out, err := runQuery(ctx, readDB, in.SQL)
 		return nil, out, err
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "dry_run_write",
+		Description: "Test one INSERT, UPDATE or DELETE without saving anything: it runs inside a transaction " +
+			"that is always rolled back, and reports how many rows it would change. " +
+			"Always do this before execute_write, and pass the row count it returns to execute_write.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}, // it never commits
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DryRunWriteInput) (*mcp.CallToolResult, DryRunWriteOutput, error) {
+		n, err := dryRunWrite(ctx, writeDB, in.SQL)
+		return nil, DryRunWriteOutput{RowsAffected: n}, err
 	})
 
 	// stdout is the line to Claude, so all our own logging goes to stderr (log's default).

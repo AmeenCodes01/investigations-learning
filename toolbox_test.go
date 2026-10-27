@@ -77,3 +77,54 @@ func TestRunQueryStopsSlowQueries(t *testing.T) {
 		t.Fatalf("err = %v, want MySQL's execution time limit", err)
 	}
 }
+
+// countRows returns the result of a COUNT(*) query, for checking data before and after.
+func countRows(t *testing.T, db *sql.DB, query string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(query).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestDryRunWriteCountsRowsButSavesNothing(t *testing.T) {
+	db := testDB(t, "DATABASE_URL_RW")
+	const pending = "SELECT COUNT(*) FROM orders WHERE status = 'pending'"
+
+	n, err := dryRunWrite(context.Background(), db, "UPDATE orders SET status = 'paid' WHERE status = 'pending'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Errorf("rows affected = %d, want 3", n)
+	}
+	if got := countRows(t, db, pending); got != 3 {
+		t.Errorf("pending orders after dry run = %d, want 3 (unchanged)", got)
+	}
+}
+
+func TestDryRunWriteRefusesTooManyRows(t *testing.T) {
+	db := testDB(t, "DATABASE_URL_RW")
+	const customers = "SELECT COUNT(*) FROM customers"
+	before := countRows(t, db, customers)
+
+	_, err := dryRunWrite(context.Background(), db,
+		"INSERT INTO customers (name) WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1001) SELECT 'x' FROM n")
+	if err == nil {
+		t.Fatal("a 1001-row write passed the dry run")
+	}
+	if after := countRows(t, db, customers); after != before {
+		t.Errorf("customers went from %d to %d", before, after)
+	}
+}
+
+func TestWriteUserCannotChangeSchema(t *testing.T) {
+	db := testDB(t, "DATABASE_URL_RW")
+
+	// Schema changes commit immediately in MySQL, so a rollback couldn't undo them: they must be refused outright.
+	_, err := dryRunWrite(context.Background(), db, "DROP TABLE orders")
+	if err == nil || !strings.Contains(err.Error(), "command denied") {
+		t.Fatalf("err = %v, want MySQL to deny DROP", err)
+	}
+}
