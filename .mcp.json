@@ -3,7 +3,11 @@
     "toolbox": {
       "type": "stdio",
       "command": "go",
-      "args": ["run", "."]
+      "args": ["run", "."],
+      "env": {
+        "DATABASE_URL_RO": "${DATABASE_URL_RO}",
+        "DATABASE_URL_RW": "${DATABASE_URL_RW}"
+      }
     }
   }
 }
